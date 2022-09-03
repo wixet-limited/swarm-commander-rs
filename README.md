@@ -6,7 +6,7 @@ Command your swarm with success! You can create many and many `commands` and mon
 [![Crates.io][crates-badge]][crates-url]
 [![Apache 2 licensed][apache-badge]][apache-url]
 
-[crates-badge]: https://img.shields.io/crates/v/machine-info.svg
+[crates-badge]: https://img.shields.io/crates/v/swarm-commander.svg
 [crates-url]: https://crates.io/crates/swarm-commander
 [apache-badge]: https://img.shields.io/badge/license-apache2-blue.svg
 [apache-url]: https://github.com/wixet-limited/swarm-commander-rs/blob/master/LICENSE
