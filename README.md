@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     cmd.arg("-c").arg("/opt/nginx/nginx.conf");
         
     // Your parser which will receive all the outputs and parse them. Return None if you just want to skip the line
-    let parser = move |line: &str, std_type: &StdType| -> Option<Request> {
+    let parser = move |line: &str, pid: u32, std_type: &StdType| -> Option<Request> {
         // This nginx output is like "GET /index.html 200 Mozilla/5.0"
         if line.starts_with("GET") || line.starts_with("POST") {
             // I'm interested only on GET and POST requests

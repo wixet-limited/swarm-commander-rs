@@ -78,7 +78,7 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
 ///     cmd.arg("-c").arg("/opt/nginx/nginx.conf");
 ///         
 ///     // Your parser which will receive all the outputs and parse them. Return None if you just want to skip the line
-///     let parser = move |line: &str, std_type: &StdType| -> Option<Request> {
+///     let parser = move |line: &str, pid: u32, std_type: &StdType| -> Option<Request> {
 ///         // This nginx output is like "GET /index.html 200 Mozilla/5.0"
 ///         if line.starts_with("GET") || line.starts_with("POST") {
 ///             // I'm interested only on GET and POST requests
@@ -144,7 +144,7 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
 /// }
 ///```
 pub async fn run_hive<F, T: 'static + std::marker::Send>(client_event_notifier: flume::Sender<RunnerEvent<T>>, f: F) -> (tokio::task::JoinHandle<()>, Hive) 
-where F: FnMut(&str, &StdType) -> Option<T> + std::marker::Send + Copy + 'static
+where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 'static
 {
     let mut processes: HashMap<String, flume::Sender<bool>> = HashMap::new();
     let (termination_notifier, termination_receiver) = flume::unbounded::<String>();
@@ -196,8 +196,8 @@ where F: FnMut(&str, &StdType) -> Option<T> + std::marker::Send + Copy + 'static
                                 processes.insert(id.to_owned(), stop_sender);
                                 
                                 tokio::spawn(monitor_process(stop_receiver, client_event_notifier.clone(), termination_notifier.clone(), id.to_owned(), child));
-                                tokio::spawn(std_reader(reader_out, client_event_notifier.clone(),id.to_owned(), StdType::Out, f));
-                                tokio::spawn(std_reader(reader_err, client_event_notifier.clone(),id.to_owned(), StdType::Err, f));
+                                tokio::spawn(std_reader(reader_out, client_event_notifier.clone(),id.to_owned(), pid, StdType::Out, f));
+                                tokio::spawn(std_reader(reader_err, client_event_notifier.clone(),id.to_owned(), pid, StdType::Err, f));
                             },
                             Err(err) => error!("{:?}", err)
                         };
@@ -234,8 +234,8 @@ impl Hive {
 }
 
 /// The stdout and stderr reader. It reads asynchronously line by line and provides to your parser each one.
-pub async fn std_reader<F, T>(mut reader: BufReader<impl tokio::io::AsyncRead + Unpin>, task_sender: flume::Sender<RunnerEvent<T>>, id: String, std_type: StdType, mut f: F) 
-where F: FnMut(&str,&StdType) -> Option<T> + std::marker::Send + Copy + 'static
+pub async fn std_reader<F, T>(mut reader: BufReader<impl tokio::io::AsyncRead + Unpin>, task_sender: flume::Sender<RunnerEvent<T>>, id: String, pid: u32, std_type: StdType, mut f: F) 
+where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 'static
 {
     debug!("Std reader started");
     let mut buf = Vec::<u8>::new();
@@ -245,7 +245,7 @@ where F: FnMut(&str,&StdType) -> Option<T> + std::marker::Send + Copy + 'static
         let line = String::from_utf8(buf.to_owned()).unwrap();
         log.push_front(line.to_owned());
         log.truncate(10);
-        if let Some(m) = f(&line, &std_type) {
+        if let Some(m) = f(&line, pid, &std_type) {
             let event = StatusEvent{
                 id: id.to_owned(),
                 data: m
