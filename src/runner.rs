@@ -140,6 +140,8 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
 ///             }
 ///         }
 ///     }
+///     // Kill all running processes before exit
+///     hive.disband().await?;
 ///     Ok(())
 /// }
 ///```
@@ -150,14 +152,27 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
     let (termination_notifier, termination_receiver) = flume::unbounded::<String>();
     let (kill_request_sender, kill_request_receiver) = flume::unbounded::<String>();
     let (run_request_sender, run_request_receiver) = flume::unbounded::<(String, Command)>();
+    let (disband_sender, disband_receiver) = flume::unbounded();
 
     let join_handle = tokio::spawn(async move {
-        loop {
+        let mut run = true;
+        let mut shutting_down = false;
+        while run {
             tokio::select!(
                 id = termination_receiver.recv_async() => {
                     if let Ok(id) = id {
                         info!("Cleaning process {}", id);
                         processes.remove(&id);
+
+                        if shutting_down {
+                            let remaining = processes.len();
+                            if remaining == 0 {
+                                info!("No processes running, hive disbanded");
+                                run = false;
+                            } else {
+                                info!("{remaining} remaining processes until disband");
+                            }
+                        }
                     }
                 },
                 id = kill_request_receiver.recv_async() => {
@@ -165,7 +180,7 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                         if let Some(process_killer) = processes.get(&id) {
                             info!("Killing {}", id);
                             if let Err(error) = process_killer.send_async(true).await {
-                                error!("Error al matar {:?}", error);
+                                error!("Error when killing {:?}", error);
                             }
                         } else {
                             warn!("Trying to kill a missing process {}", id);
@@ -202,14 +217,25 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                             Err(err) => error!("{:?}", err)
                         };
                     } 
+                },
+                _ = disband_receiver.recv_async() => {
+                    info!("Starting hive disband");
+                    for process_killer in processes.values_mut() {
+                        if let Err(error) = process_killer.send_async(true).await {
+                            error!("Error when killing {:?}", error);
+                        }
+                    }
+                    shutting_down = true;
                 }
             );
         }
+        info!("Hive disbanded");
     });
 
     (join_handle, Hive{
         kill_request_sender,
-        run_request_sender
+        run_request_sender,
+        disband_sender
     })
 
 }
@@ -217,7 +243,8 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
 /// The place where all of your commands are living
 pub struct Hive {
     kill_request_sender: flume::Sender<String>,
-    run_request_sender: flume::Sender<(String, Command)>
+    run_request_sender: flume::Sender<(String, Command)>,
+    disband_sender: flume::Sender<bool>,
 }
 
 
@@ -231,6 +258,12 @@ impl Hive {
         debug!("Spawn {}", id);
         Ok(self.run_request_sender.send_async((id.to_string(), cmd)).await?)
     }
+
+    /// Disband the swarm. Stop all processes and tasks
+    pub async fn disband(&mut self) -> Result<()> {
+        Ok(self.disband_sender.send_async(true).await?)
+    }
+
 }
 
 /// The stdout and stderr reader. It reads asynchronously line by line and provides to your parser each one.

@@ -121,6 +121,8 @@ async fn main() -> Result<()> {
             }
         }
     }
+    // Kill all running processes before exit
+    hive.disband().await?;
     Ok(())
 }
 
