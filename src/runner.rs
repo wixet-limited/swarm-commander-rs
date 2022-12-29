@@ -36,16 +36,16 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
                 event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
                     success:true,
                     id: process_id.to_owned(),
-                    pid: pid
+                    pid
                 })).await.unwrap()
             },
             _ = killer.recv_async() => {
                 info!("Killing {:?}", process_id);
-                if !child.kill().await.is_ok() {
+                if child.kill().await.is_err() {
                     event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
                         success: false,
                         id: process_id.to_owned(),
-                        pid: pid
+                        pid
                     })).await.unwrap()
                 }
             }
@@ -225,7 +225,7 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                                 let pid = child.id().unwrap();
                                 client_event_notifier.send_async(RunnerEvent::RunnerStartEvent(RunnerStartEvent{
                                     success: true,
-                                    pid: pid,
+                                    pid,
                                     id: id.to_owned()
                                 })).await.unwrap();
                                 let stderr = child.stderr.take().unwrap();
@@ -255,7 +255,7 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                 _ = disband_receiver.recv_async() => {
                     info!("Starting hive disband");
                     shutting_down = true;
-                    if processes.len() > 0 {
+                    if !processes.is_empty() {
                         for process_killer in processes.values_mut() {
                             if let Err(error) = process_killer.send_async(true).await {
                                 error!("Error when killing {:?}", error);
