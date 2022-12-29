@@ -11,5 +11,5 @@
 mod event;
 mod runner;
 
-pub use runner::{Hive, run_hive};
+pub use runner::{Hive, ProcInfo, run_hive};
 pub use event::{RunnerEvent, RunnerLogEvent, RunnerStartEvent, RunnerStopEvent, StatusEvent, StdType};

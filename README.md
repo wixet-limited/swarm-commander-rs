@@ -30,7 +30,7 @@ A basic example
 
 ```toml
 [dependencies]
-swarm-commander = "0.9.0"
+swarm-commander = "0.9.3"
 ```
 Put this in your main.rs:
 
@@ -116,8 +116,13 @@ async fn main() -> Result<()> {
                 
             },
             _ = interval.tick() => {
+                // List all running processes
+                let proc_list = hive.processes_info().await;
+                println("Before die: {:?}", proc_list);
                 println!("DIE NGINX DIE HAHAHAAH");
                 hive.halt("my-nginx").await?;
+                let proc_list = hive.processes_info().await;
+                println("After die: {:?}", proc_list);
             }
         }
     }

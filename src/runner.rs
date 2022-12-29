@@ -5,6 +5,9 @@ use anyhow::Result;
 use tokio::io::{BufReader, AsyncBufReadExt};
 use std::process::Stdio;
 use log::{info, warn, debug, error};
+use std::sync::{Arc};
+use futures::lock::Mutex;
+use chrono::prelude::{Utc, DateTime};
 
 
 /// This function controls when the program exited (friendly or crashed) and is able to kill the command when needed. It is like an async wrapper on top of a command.
@@ -50,6 +53,19 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
     }
     info!("Monitor for {} end", process_id);
 }
+
+/// Public information about a running process
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct ProcInfo {
+    /// The command executed
+    cmd: String,
+    /// The process pid
+    pid: u32,
+    /// When the process started
+    start_time: DateTime<Utc>
+}
+
 
 /// The most important part and the thing that you have to use. It creates an enviroment where your command can live, enjoy and die. The lifecycle. You are the queen of this hive so you decide what commands are
 /// created, how many and when they will die. All data that comes from the commands will be sent to the `client_event_notifier` provided.
@@ -135,11 +151,17 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
 ///                 
 ///             },
 ///             _ = interval.tick() => {
+///                 // List all running processes
+///                 let proc_list = hive.processes_info().await;
+///                 println("Before die: {:?}", proc_list);
 ///                 println!("DIE NGINX DIE HAHAHAAH");
 ///                 hive.halt("my-nginx").await?;
+///                 let proc_list = hive.processes_info().await;
+///                 println("After die: {:?}", proc_list);
 ///             }
 ///         }
 ///     }
+///     
 ///     // Kill all running processes before exit
 ///     hive.disband().await?;
 ///     Ok(())
@@ -154,6 +176,9 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
     let (run_request_sender, run_request_receiver) = flume::unbounded::<(String, Command)>();
     let (disband_sender, disband_receiver) = flume::unbounded();
 
+    let info_proc = Arc::new(Mutex::new(HashMap::new()));
+    let hive_info_proc = info_proc.clone();
+
     let join_handle = tokio::spawn(async move {
         let mut run = true;
         let mut shutting_down = false;
@@ -163,6 +188,7 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                     if let Ok(id) = id {
                         info!("Cleaning process {}", id);
                         processes.remove(&id);
+                        info_proc.lock().await.remove(&id);
 
                         if shutting_down {
                             let remaining = processes.len();
@@ -209,7 +235,15 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                                 
                                 let (stop_sender, stop_receiver) = flume::bounded(1);
                                 processes.insert(id.to_owned(), stop_sender);
-                                
+                                let std_command = cmd.as_std();
+                                let args = std_command.get_args().into_iter().map(|arg| arg.to_str().unwrap()).collect::<Vec<&str>>().join(" ");
+                                let proc_info = ProcInfo {
+                                    cmd: format!("{} {}", std_command.get_program().to_str().unwrap(), args),
+                                    start_time: Utc::now(),
+                                    pid,
+                                };
+                                info_proc.lock().await.insert(id.to_owned(), proc_info);
+
                                 tokio::spawn(monitor_process(stop_receiver, client_event_notifier.clone(), termination_notifier.clone(), id.to_owned(), child));
                                 tokio::spawn(std_reader(reader_out, client_event_notifier.clone(),id.to_owned(), pid, StdType::Out, f));
                                 tokio::spawn(std_reader(reader_err, client_event_notifier.clone(),id.to_owned(), pid, StdType::Err, f));
@@ -235,7 +269,8 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
     (join_handle, Hive{
         kill_request_sender,
         run_request_sender,
-        disband_sender
+        disband_sender,
+        processes_info: hive_info_proc
     })
 
 }
@@ -245,6 +280,7 @@ pub struct Hive {
     kill_request_sender: flume::Sender<String>,
     run_request_sender: flume::Sender<(String, Command)>,
     disband_sender: flume::Sender<bool>,
+    processes_info: Arc<Mutex<HashMap<String, ProcInfo>>>
 }
 
 
@@ -258,10 +294,15 @@ impl Hive {
         debug!("Spawn {}", id);
         Ok(self.run_request_sender.send_async((id.to_string(), cmd)).await?)
     }
-
     /// Disband the swarm. Stop all processes and tasks
     pub async fn disband(&mut self) -> Result<()> {
         Ok(self.disband_sender.send_async(true).await?)
+    }
+
+    /// Information of all processes. The returned data is cloned from the
+    /// internal registry so don't call it so often if your process list is huge
+    pub async fn processes_info(&self) -> HashMap<String, ProcInfo> {
+        self.processes_info.lock().await.clone()
     }
 
 }
