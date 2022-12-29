@@ -30,7 +30,7 @@ A basic example
 
 ```toml
 [dependencies]
-swarm-commander = "0.9.3"
+swarm-commander = "0.9.4"
 ```
 Put this in your main.rs:
 

@@ -254,12 +254,18 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                 },
                 _ = disband_receiver.recv_async() => {
                     info!("Starting hive disband");
-                    for process_killer in processes.values_mut() {
-                        if let Err(error) = process_killer.send_async(true).await {
-                            error!("Error when killing {:?}", error);
-                        }
-                    }
                     shutting_down = true;
+                    if processes.len() > 0 {
+                        for process_killer in processes.values_mut() {
+                            if let Err(error) = process_killer.send_async(true).await {
+                                error!("Error when killing {:?}", error);
+                            }
+                        }
+                    } else {
+                        // No processes pending to kill, we can exit
+                        run = false;
+                    }
+                    
                 }
             );
         }
