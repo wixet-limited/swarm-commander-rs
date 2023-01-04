@@ -92,13 +92,13 @@ pub async fn monitor_process<T>(
 #[allow(dead_code)]
 pub struct ProcInfo {
     /// The command executed
-    command: String,
+    pub command: String,
     /// The command arguments
-    args: Vec<String>,
+    pub args: Vec<String>,
     /// The process pid
-    pid: u32,
+    pub pid: u32,
     /// When the process started
-    start_time: DateTime<Utc>
+    pub start_time: DateTime<Utc>
 }
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "swarm-commander"
-version = "0.9.6"
+version = "0.9.7"
 edition = "2021"
 license-file = "LICENSE"
 description = "Manage tons of commands asynchronously"
