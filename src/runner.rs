@@ -19,22 +19,27 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
         tokio::select! {
             res = child.wait() => {
                 info!("Process {} exited", process_id);
-                match res {
+                let status_code = match res {
                     Ok(res) => {
                         if let Some(code) = res.code() {
                             if code != 0 {
                                 warn!("The process {} exited with error code {}, please check the logs", process_id, code);
                             }
+                            Some(code)
+                        } else {
+                            None
                         }
                     }, 
                     Err(error) => {
                         error!("Error when exiting {}: {:?}", process_id, error);
+                        None
                     }
                 };
                 keep_running = false;
                 process_clean.send_async(process_id.to_owned()).await.unwrap();
                 event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
-                    success:true,
+                    code: status_code,
+                    success: status_code.is_some(),
                     id: process_id.to_owned(),
                     pid
                 })).await.unwrap()
@@ -43,6 +48,7 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
                 info!("Killing {:?}", process_id);
                 if child.kill().await.is_err() {
                     event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
+                        code: None,
                         success: false,
                         id: process_id.to_owned(),
                         pid

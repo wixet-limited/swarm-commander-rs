@@ -41,6 +41,8 @@ pub struct RunnerStopEvent {
     pub pid: u32,
     /// Id of the command
     pub id: String,
+    /// Command exit status code. 0 means OK
+    pub code: Option<i32>
 }
 
 /// The event source, stderr or stdout
