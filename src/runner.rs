@@ -11,8 +11,14 @@ use chrono::prelude::{Utc, DateTime};
 
 
 /// This function controls when the program exited (friendly or crashed) and is able to kill the command when needed. It is like an async wrapper on top of a command.
-pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flume::Sender<RunnerEvent<T>>, process_clean: flume::Sender<String>, process_id: String, mut child: Child) {
-    let pid = child.id().unwrap();
+pub async fn monitor_process<T>(
+    killer: flume::Receiver<bool>, 
+    event_sender: flume::Sender<RunnerEvent<T>>, 
+    process_clean: flume::Sender<String>, 
+    process_id: String, 
+    mut child: Child, 
+    processes_info: Arc<futures::lock::Mutex<HashMap<String, ProcInfo>>>
+) {
     info!("Monitor for {} started", process_id);
     let mut keep_running = true;
     while keep_running {
@@ -36,23 +42,44 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
                     }
                 };
                 keep_running = false;
+                let processes = processes_info.lock().await;
+                if let Some(proc_info) =processes.get(&process_id) {
+                    event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
+                        info: ProcInfo { 
+                            command: proc_info.command.to_owned(), 
+                            args: proc_info.args.to_owned(), 
+                            pid: proc_info.pid, 
+                            start_time: proc_info.start_time.to_owned()
+                        },
+                        code: status_code,
+                        success: status_code.is_some(),
+                        id: process_id.to_owned(),
+                    })).await.unwrap()
+                } else {
+                    error!("No process information to send");
+                }
                 process_clean.send_async(process_id.to_owned()).await.unwrap();
-                event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
-                    code: status_code,
-                    success: status_code.is_some(),
-                    id: process_id.to_owned(),
-                    pid
-                })).await.unwrap()
+
             },
             _ = killer.recv_async() => {
                 info!("Killing {:?}", process_id);
                 if child.kill().await.is_err() {
-                    event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
-                        code: None,
-                        success: false,
-                        id: process_id.to_owned(),
-                        pid
-                    })).await.unwrap()
+                    let processes = processes_info.lock().await;
+                    if let Some(proc_info) =processes.get(&process_id) {
+                        event_sender.send_async(RunnerEvent::RunnerStopEvent(RunnerStopEvent{
+                            info: ProcInfo { 
+                                command: proc_info.command.to_owned(), 
+                                args: proc_info.args.to_owned(), 
+                                pid: proc_info.pid, 
+                                start_time: proc_info.start_time.to_owned()
+                            },
+                            code: None,
+                            success: false,
+                            id: process_id.to_owned(),
+                        })).await.unwrap()
+                    } else {
+                        error!("No process information to send");
+                    }
                 }
             }
         };
@@ -65,7 +92,9 @@ pub async fn monitor_process<T>(killer: flume::Receiver<bool>, event_sender: flu
 #[allow(dead_code)]
 pub struct ProcInfo {
     /// The command executed
-    cmd: String,
+    command: String,
+    /// The command arguments
+    args: Vec<String>,
     /// The process pid
     pid: u32,
     /// When the process started
@@ -242,15 +271,22 @@ where F: FnMut(&str, u32, &StdType) -> Option<T> + std::marker::Send + Copy + 's
                                 let (stop_sender, stop_receiver) = flume::bounded(1);
                                 processes.insert(id.to_owned(), stop_sender);
                                 let std_command = cmd.as_std();
-                                let args = std_command.get_args().into_iter().map(|arg| arg.to_str().unwrap()).collect::<Vec<&str>>().join(" ");
+                                let args = std_command.get_args().into_iter().map(|arg| arg.to_str().unwrap().to_owned()).collect::<Vec<String>>();
                                 let proc_info = ProcInfo {
-                                    cmd: format!("{} {}", std_command.get_program().to_str().unwrap(), args),
+                                    command: std_command.get_program().to_str().unwrap().to_owned(),
+                                    args,
                                     start_time: Utc::now(),
                                     pid,
                                 };
+                                // Create a copy just to make the things easier
+                                /*let monitor_proc_info = ProcInfo { 
+                                    command: proc_info.command.to_owned(), 
+                                    args: proc_info.args.to_owned(), 
+                                    pid: proc_info.pid, 
+                                    start_time: proc_info.start_time.to_owned()
+                                };*/
                                 info_proc.lock().await.insert(id.to_owned(), proc_info);
-
-                                tokio::spawn(monitor_process(stop_receiver, client_event_notifier.clone(), termination_notifier.clone(), id.to_owned(), child));
+                                tokio::spawn(monitor_process(stop_receiver, client_event_notifier.clone(), termination_notifier.clone(), id.to_owned(), child, info_proc.clone()));
                                 tokio::spawn(std_reader(reader_out, client_event_notifier.clone(),id.to_owned(), pid, StdType::Out, f));
                                 tokio::spawn(std_reader(reader_err, client_event_notifier.clone(),id.to_owned(), pid, StdType::Err, f));
                             },

@@ -1,3 +1,5 @@
+use crate::ProcInfo;
+
 /// All the events that a command can send during its lifecycle
 #[derive(Debug)]
 pub enum RunnerEvent<T> {
@@ -37,12 +39,13 @@ pub struct RunnerStartEvent {
 pub struct RunnerStopEvent {
     /// If the stop process was ok
     pub success: bool,
-    /// Pid of the stopped command
-    pub pid: u32,
     /// Id of the command
     pub id: String,
     /// Command exit status code. 0 means OK
-    pub code: Option<i32>
+    pub code: Option<i32>,
+    /// Information about the terminated program
+    pub info: ProcInfo,
+    
 }
 
 /// The event source, stderr or stdout
